@@ -37,10 +37,101 @@ object IOIntroduction {
   def smallProgram_v2(): IO[Unit] =
     (IO(StdIn.readLine()), IO(StdIn.readLine())).mapN(_ + _).map(println)
 
+  /**
+   * Exercises
+   */
+
+  // 1 - sequence two IOs and take the result of the LAST one
+  // hint: use flatMap
+  def sequenceTakeLast[A, B](ioa: IO[A], iob: IO[B]): IO[B] =
+    ioa.flatMap(_ => iob)
+
+  def sequenceTakeLast_V2[A, B](ioa: IO[A], iob: IO[B]): IO[B] =
+    ioa *> iob // "andThen"
+
+  def sequenceTakeLast_V3[A, B](ioa: IO[A], iob: IO[B]): IO[B] =
+    ioa >> iob // "andThen" with by-name call
+
+  // 2 - sequence two IOs and take the result of the FIRST one
+  // hint: use flatMap
+  def sequenceTakeFirst[A, B](ioa: IO[A], iob: IO[B]): IO[A] =
+    ioa.flatMap(a => iob.map(_ => a))
+
+  def sequenceTakeFirst_V2[A, B](ioa: IO[A], iob: IO[B]): IO[A] =
+    ioa <* iob
+
+  // 3 - repeat an IO effect forever
+  // hint: use flatMap + recursion
+  def forever[A](io: IO[A]): IO[A] = {
+    io.flatMap(_ => forever(io))
+  }
+
+  def forever_V2[A](io: IO[A]): IO[A] = {
+    io >> forever_V2(io) // same - lazy
+  }
+
+  def forever_V3[A](io: IO[A]): IO[A] = {
+    io *> forever_V3(io) // eager
+  }
+
+  def forever_V4[A](io: IO[A]): IO[A] = {
+    io.foreverM // with tail recursion
+  }
+
+  // 4 - convert an IO to a different type
+  // hint: use map
+  def convert[A, B](ioa: IO[A], value: B): IO[B] = {
+    ioa.map(_ => value)
+  }
+
+  def convert_V2[A, B](ioa: IO[A], value: B): IO[B] = {
+    ioa.as(value) // same
+  }
+
+  // 5 - discard value inside an IO, just return Unit
+  def asUnit[A](ioa: IO[A]): IO[Unit] = {
+    ioa.map(_ => ())
+  }
+
+  def asUnit_V2[A](ioa: IO[A]): IO[Unit] = {
+    ioa.as(()) // discourage - don't use this
+  }
+
+  def asUnit_V3[A](ioa: IO[A]): IO[Unit] = {
+    ioa.void // same - encouraged
+  }
+
+  // 6 - fix stack recursion
+  def sum(n: Int): Int =
+    if (n <= 0) 0
+    else n + sum(n - 1)
+
+  def sumIO(n: Int): IO[Int] = { // no stack recursion, invoke tail recursion
+    if (n <= 0) IO(0) // by cats effect runtime BTS
+    else for {
+      lastNumber <- IO(n)
+      prevSum <- sumIO(n - 1)
+    } yield prevSum + lastNumber
+  }
+
+  // 7 (hard) - write a fibonacci IO that does NOT crash on recursion
+  /// hints: use recursion, ignore exponential complexity, use flatMap heavily
+  def fibonacci(n: Int): IO[BigInt] = {
+    if (n < 2) IO(1)
+    else for {
+      last <- IO.defer(fibonacci(n - 1)) // same as .delay(...).flatten
+      previous <- IO.defer(fibonacci(n - 2))
+    } yield last + previous
+  }
+
   def main(args: Array[String]): Unit = {
     import cats.effect.unsafe.implicits.global // "platform"
     // "end of the world"
-    println(smallProgram_v2().unsafeRunSync())
+    //    println(smallProgram_v2().unsafeRunSync())
+    //    forever(IO(println("forever!"))).unsafeRunSync()
+    //    println(sumIO(20000).unsafeRunSync())
+    //    sum(20000)
+    println(fibonacci(10).unsafeRunSync())
+    (1 to 100).foreach(i => println(fibonacci(i).unsafeRunSync()))
   }
-
 }
