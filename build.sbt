@@ -9,4 +9,3 @@ lazy val root = (project in file("."))
       "org.typelevel" %% "cats-effect" % "3.5.0"
     )
   )
-
