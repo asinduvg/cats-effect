@@ -2,6 +2,7 @@ package com.rockthejvm.part4coordination
 
 import cats.effect.{IO, IOApp, Ref}
 import com.rockthejvm.utils.*
+import scala.concurrent.duration.*
 
 object Refs extends IOApp.Simple {
 
@@ -94,6 +95,73 @@ object Refs extends IOApp.Simple {
     } yield ()
   }
 
-  override def run: IO[Unit] = demoConcurrentWorkPure()
+  /** Exercise
+    */
+  def tickingClockImpure(): Unit = {
+    var ticks: Long = 0L
+    def tickingClock: IO[Unit] = for {
+      _ <- IO.sleep(1.second)
+      _ <- IO(System.currentTimeMillis()).debugging
+      _ <- IO(ticks += 1) // not thread safe
+      _ <- tickingClock
+    } yield ()
+
+    def printTicks: IO[Unit] = for {
+      _ <- IO.sleep(5.seconds)
+      _ <- IO(s"TICKS: $ticks").debugging
+      _ <- printTicks
+    } yield ()
+
+    for {
+      _ <- (tickingClock, printTicks).parTupled
+    } yield ()
+  }
+
+  def tickingClockPure(): IO[Unit] = {
+    def tickingClock(ticks: Ref[IO, Long]): IO[Unit] = for {
+      _ <- IO.sleep(1.second)
+      _ <- IO(System.currentTimeMillis()).debugging
+      _ <- ticks.update(_ + 1) // thread safe effect
+      _ <- tickingClock(ticks)
+    } yield ()
+
+    def printTicks(ticks: Ref[IO, Long]): IO[Unit] = for {
+      _ <- IO.sleep(5.seconds)
+      currentTick <- ticks.get
+      _ <- IO(s"TICKS: $currentTick").debugging
+      _ <- printTicks(ticks)
+    } yield ()
+
+    for {
+      tickRef <- Ref[IO].of(0L)
+      _ <- (tickingClock(tickRef), printTicks(tickRef)).parTupled
+    } yield ()
+  }
+
+  def tickingClockWeird(): IO[Unit] = {
+    val ticks = Ref[IO].of(0) // IO[ref]
+
+    def tickingClock: IO[Unit] = for {
+      t <- ticks // ticks will give you a NEW ref
+      _ <- IO.sleep(1.second)
+      _ <- IO(System.currentTimeMillis()).debugging
+      _ <- t.update(_ + 1)
+      _ <- tickingClock
+    } yield ()
+
+    def printTicks: IO[Unit] = for {
+      t <- ticks // ticks will give you a NEW ref
+      _ <- IO.sleep(5.seconds)
+      currentTicks <- t.get
+      _ <- IO(s"TICKS: $currentTicks").debugging
+      _ <- printTicks
+    } yield ()
+
+    for {
+      _ <- (tickingClock, printTicks).parTupled
+    } yield ()
+  }
+
+  override def run: IO[Unit] = tickingClockWeird()
 
 }
