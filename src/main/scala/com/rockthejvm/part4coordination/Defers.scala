@@ -1,5 +1,6 @@
 package com.rockthejvm.part4coordination
 
+import cats.effect.kernel.{Fiber, Outcome}
 import cats.effect.{Deferred, IO, IOApp, Ref}
 import com.rockthejvm.utils.*
 import cats.syntax.traverse.*
@@ -116,6 +117,82 @@ object Defers extends IOApp.Simple {
     } yield ()
   }
 
-  override def run: IO[Unit] = fileNotifierWithDeferred()
+  /** Exercises:
+    *   - (medium) write a small alarm notification with two simultaneous IOs
+    *     - one that increments a counter every second (a clock)
+    *     - one that waits for the counter to become 10, then prints a message
+    *       "time's up"
+    *   - (mega hard) implement racePair with Deferred.
+    *     - use a Deferred which can hold an Either[outcome for ioa, outcome for
+    *       iob]
+    *     - start two fibers, one for each IO
+    *     - on completion (with any status), each IO needs to complete that
+    *       Deferred (hint: use a finalizer from the Resources lesson) (hint2:
+    *       use a guarantee call to make sure the fibers complete the Deferred)
+    *     - what do you do in case of cancellation (the hardest part?)
+    */
+
+  def eggBoiler(): IO[Unit] = {
+    def tickingClock(
+        counter: Ref[IO, Int],
+        signal: Deferred[IO, Unit]
+    ): IO[Unit] = for {
+      _ <- IO.sleep(1.second)
+      count <- counter.updateAndGet(_ + 1)
+      _ <- IO(s"[incrementer] updated counter: $count").debugging
+      _ <-
+        if (count == 10) signal.complete(IO.unit)
+        else tickingClock(counter, signal)
+    } yield ()
+
+    def eggReadyNotification(signal: Deferred[IO, Unit]) = for {
+      _ <- IO("Egg boiling on some other fiber, waiting...").debugging
+      _ <- signal.get
+      _ <- IO("EGG READY!").debugging
+    } yield ()
+
+    for {
+      counter <- Ref[IO].of(0)
+      signal <- Deferred[IO, Unit]
+      fibNotifier <- eggReadyNotification(signal).start
+      clock <- tickingClock(counter, signal).start
+      _ <- fibNotifier.join
+      _ <- clock.join
+    } yield ()
+  }
+
+  type RaceResult[A, B] = Either[
+    (Outcome[IO, Throwable, A], Fiber[IO, Throwable, B]),
+    (Fiber[IO, Throwable, A], Outcome[IO, Throwable, B])
+  ]
+
+  type EitherOutcome[A, B] =
+    Either[Outcome[IO, Throwable, A], Outcome[IO, Throwable, B]]
+
+  def ourRacePair[A, B](ioa: IO[A], iob: IO[B]): IO[RaceResult[A, B]] =
+    IO.uncancelable { poll =>
+      for {
+        signal <- Deferred[IO, EitherOutcome[A, B]]
+        fibA <- ioa
+          .guaranteeCase(outcomeA => signal.complete(Left(outcomeA)).void)
+          .start
+        fibB <- iob
+          .guaranteeCase(outcomeB => signal.complete(Right(outcomeB)).void)
+          .start
+        result <- poll(signal.get)
+          .onCancel { // blocking call - should be cancellable
+            for {
+              cancelFibA <- fibA.cancel.start
+              cancelFibB <- fibB.cancel.start
+              _ <- cancelFibA.join
+              _ <- cancelFibB.join
+            } yield ()
+          }
+      } yield result match
+        case Left(outcomeA)  => Left(outcomeA, fibB)
+        case Right(outcomeB) => Right(fibA, outcomeB)
+    }
+
+  override def run: IO[Unit] = eggBoiler()
 
 }
