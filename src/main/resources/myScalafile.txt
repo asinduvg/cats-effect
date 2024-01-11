@@ -1,0 +1,1 @@
+I love Scala.Cats Effect seems quite funNever would I have thought I would do low-level concurrency WITH pure FP.
