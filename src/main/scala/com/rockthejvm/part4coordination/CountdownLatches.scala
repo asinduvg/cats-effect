@@ -1,5 +1,6 @@
 package com.rockthejvm.part4coordination
 
+import cats.effect.kernel.{Deferred, Ref}
 import cats.effect.std.CountDownLatch
 import cats.effect.{IO, IOApp, Resource}
 
@@ -89,7 +90,7 @@ object CountdownLatches extends IOApp.Simple {
 
   def createFileDownloaderTask(
       id: Int,
-      latch: CountDownLatch[IO],
+      latch: CDLatch,
       filename: String,
       destFolder: String
   ): IO[Unit] = for {
@@ -111,7 +112,7 @@ object CountdownLatches extends IOApp.Simple {
 
   def downloadFile(filename: String, destFolder: String): IO[Unit] = for {
     n <- FileServer.getNumChunks
-    latch <- CountDownLatch[IO](n)
+    latch <- CDLatch(n)
     _ <- IO(s"Download started on $n fibers.").debugging
     _ <- (0 until n).toList.parTraverse(id =>
       createFileDownloaderTask(id, latch, filename, destFolder)
@@ -125,6 +126,38 @@ object CountdownLatches extends IOApp.Simple {
     )
   } yield ()
 
-  override def run: IO[Unit] = downloadFile("myScalafile.txt", "src/main/resources")
+  override def run: IO[Unit] =
+    downloadFile("myScalafile.txt", "src/main/resources")
 
+}
+
+/** Exercise: implement your own CDLatch with Ref and Deferred
+  */
+
+abstract class CDLatch {
+  def await: IO[Unit]
+  def release: IO[Unit]
+}
+
+object CDLatch {
+  sealed trait State
+  case object Done extends State
+  case class Live(remainingCount: Int, signal: Deferred[IO, Unit]) extends State
+  def apply(count: Int): IO[CDLatch] = for {
+    signal <- Deferred[IO, Unit]
+    state <- Ref[IO].of[State](Live(count, signal))
+  } yield new CDLatch:
+    override def await: IO[Unit] = state.get.flatMap { s =>
+      if (s == Done) IO.unit // continue, the latch is dead
+      else signal.get // block here
+    }
+
+    override def release: IO[Unit] = state
+      .modify {
+        case Done            => Done -> IO.unit
+        case Live(1, signal) => Done -> signal.complete(()).void
+        case Live(n, signal) => Live(n - 1, signal) -> IO.unit
+      }
+      .flatten
+      .uncancelable
 }
