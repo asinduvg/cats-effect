@@ -46,7 +46,9 @@ object MutexV2 {
 
             val cleanup = state.modify { case State(locked, queue) =>
               val newQueue = queue.filterNot(_ eq signal)
-              State(locked, newQueue) -> release
+              val isBlocking = queue.exists(_ eq signal)
+              val decision = if (isBlocking) concurrent.unit else release
+              State(locked, newQueue) -> decision
             }.flatten
 
             state.modify {
@@ -98,7 +100,9 @@ object Mutex {
 
           val cleanup = state.modify { case State(locked, queue) =>
             val newQueue = queue.filterNot(_ eq signal)
-            State(locked, newQueue) -> release
+            val isBlocking = queue.exists(_ eq signal)
+            val decision = if (isBlocking) IO.unit else release
+            State(locked, newQueue) -> decision
           }.flatten
 
           state.modify { // IO[IO[Unit]]
